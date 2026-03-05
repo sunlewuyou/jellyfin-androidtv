@@ -6,10 +6,10 @@ on:
       - v*
 
 jobs:
-  publish:
-    name: Publish
+  build:
+    name: Build
     runs-on: ubuntu-24.04
-    if: ${{ contains(github.repository_owner, 'jellyfin') }}
+    if: ${{ contains(github.repository_owner, 'sunlewuyou') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -49,40 +49,33 @@ jobs:
       - name: Prepare release archive
         run: |
           mkdir -p build/jellyfin-publish
-          mv app/build/outputs/apk/*/jellyfin-androidtv-*-debug.apk build/jellyfin-publish/
-          mv app/build/outputs/apk/*/jellyfin-androidtv-*-release-unsigned.apk build/jellyfin-publish/
           mv ${{ steps.signApk.outputs.signedReleaseFile }} build/jellyfin-publish/jellyfin-androidtv-v${{ env.JELLYFIN_VERSION }}-release.apk
-          mv ${{ steps.signAab.outputs.signedReleaseFile }} build/jellyfin-publish/jellyfin-androidtv-v${{ env.JELLYFIN_VERSION }}-release.aab
-          mv app/build/version.txt build/jellyfin-publish/
-      - name: Upload release archive to GitHub release
-        uses: alexellis/upload-assets@13926a61cdb2cb35f5fdef1c06b8b591523236d3 # 0.4.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.JF_BOT_TOKEN }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          asset_paths: '["build/jellyfin-publish/*"]'
-      - name: Upload release archive to repo.jellyfin.org
-        uses: burnett01/rsync-deployments@0dc935cdecc5f5e571865e60d2a6cdc673704823 # tag=5.2
+          name: Jellyfin-Release-APK
+          path: build/jellyfin-publish/*.apk
+          
+  publish:
+    name: Publish Release
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
         with:
-          switches: -vrptz
-          path: build/jellyfin-publish/
-          remote_path: /srv/incoming/androidtv/v${{ env.JELLYFIN_VERSION }}/
-          remote_host: ${{ secrets.REPO_HOST }}
-          remote_user: ${{ secrets.REPO_USER }}
-          remote_key: ${{ secrets.REPO_KEY }}
-      - name: Update repo.jellyfin.org symlinks
-        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-        with:
-          host: ${{ secrets.REPO_HOST }}
-          username: ${{ secrets.REPO_USER }}
-          key: ${{ secrets.REPO_KEY }}
-          envs: JELLYFIN_VERSION
-          script_stop: true
-          script: |
-            if [ -d "/srv/repository/main/client/androidtv/versions/v${{ env.JELLYFIN_VERSION }}" ] && [ -n "${{ env.JELLYFIN_VERSION }}" ]; then
-                sudo rm -r /srv/repository/main/client/androidtv/versions/v${{ env.JELLYFIN_VERSION }}
-            fi
-            sudo mv /srv/incoming/androidtv/v${{ env.JELLYFIN_VERSION }} /srv/repository/main/client/androidtv/versions/v${{ env.JELLYFIN_VERSION }}
-            cd /srv/repository/main/client/androidtv;
-            sudo rm -rf *.apk version.txt;
-            sudo ln -s versions/v${JELLYFIN_VERSION}/jellyfin-androidtv-v${JELLYFIN_VERSION}-*.apk .;
-            sudo ln -s versions/v${JELLYFIN_VERSION}/version.txt .;
+          name: Jellyfin-Release-APK
+          path: artifacts
+      
+      - name: Release
+        run: |
+          wget -O ghr.tar.gz https://github.com/tcnksm/ghr/releases/download/v0.13.0/ghr_v0.13.0_linux_amd64.tar.gz
+          tar -xvf ghr.tar.gz
+          mv ghr*linux_amd64/ghr .
+          mkdir apks
+          find artifacts -name "*.apk" -exec cp {} apks \;
+          ./ghr -delete -t "${{ github.token }}" -n "${{ github.ref_name }}" "${{ github.ref_name }}" apks
+        
